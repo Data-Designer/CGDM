@@ -197,9 +197,9 @@ def obtain_label(loader, netE, netC1, netC2, args, c=None):
             feas = netE(inputs)
             outputs1 = netC1(feas)
             outputs2 = netC2(feas)
-            outputs = outputs1 + outputs2 
+            outputs = outputs1 + outputs2 # B,C
             #torch.stack([outputs1,outputs2]).mean(dim=0)
-            if start_test:
+            if start_test: # 先赋予变量值
                 all_fea = feas.float().cpu()
                 all_output = outputs.float().cpu()
                 all_label = labels.float()
@@ -208,22 +208,22 @@ def obtain_label(loader, netE, netC1, netC2, args, c=None):
                 all_fea = torch.cat((all_fea, feas.float().cpu()), 0)
                 all_output = torch.cat((all_output, outputs.float().cpu()), 0)
                 all_label = torch.cat((all_label, labels.float()), 0)
-    all_output = nn.Softmax(dim=1)(all_output)
+    all_output = nn.Softmax(dim=1)(all_output) # 一次softmax Dataset ,C
     _, predict = torch.max(all_output, 1)
     #print("all_label:",all_label.size()[0],"right:",torch.squeeze(predict).float().eq(all_label.data).sum().item())
-    accuracy = torch.sum(torch.squeeze(predict).float() == all_label).item() / float(all_label.size()[0])
+    accuracy = torch.sum(torch.squeeze(predict).float() == all_label).item() / float(all_label.size()[0]) # 这是直接输出的pseudo label
     
-    all_fea = torch.cat((all_fea, torch.ones(all_fea.size(0), 1)), 1)
+    all_fea = torch.cat((all_fea, torch.ones(all_fea.size(0), 1)), 1) # 所有特征后面加个1是啥意思 Dataset,H-> dataset,H+1
     all_fea = (all_fea.t() / torch.norm(all_fea, p=2, dim=1)).t()
     all_fea = all_fea.float().cpu().numpy()
 
-    K = all_output.size(1)
+    K = all_output.size(1) # H+1
     aff = all_output.float().cpu().numpy()
-    initc = aff.transpose().dot(all_fea)
+    initc = aff.transpose().dot(all_fea) # C,H+1
     initc = initc / (1e-8 + aff.sum(axis=0)[:,None])
-    dd = cdist(all_fea, initc, 'cosine')
-    pred_label = dd.argmin(axis=1)
-    acc = np.sum(pred_label == all_label.float().numpy()) / len(all_fea)
+    dd = cdist(all_fea, initc, 'cosine') # 这个计算cosine有点东西！dataset，C。
+    pred_label = dd.argmin(axis=1) # dataset,1
+    acc = np.sum(pred_label == all_label.float().numpy()) / len(all_fea) # 这是memory bank加强的label
 
     for round in range(1):
         aff = np.eye(K)[pred_label]
@@ -239,6 +239,7 @@ def obtain_label(loader, netE, netC1, netC2, args, c=None):
 
 
 def gradient_discrepancy_loss(args, preds_s1,preds_s2, src_y, preds_t1, preds_t2, tgt_y, netE, netC1, netC2):
+    """核心：计算梯度差异 loss"""
     loss_w = Weighted_CrossEntropy
     loss = nn.CrossEntropyLoss()
     #CrossEntropyLabelSmooth(num_classes=args.class_num, epsilon=0.1)
@@ -246,13 +247,14 @@ def gradient_discrepancy_loss(args, preds_s1,preds_s2, src_y, preds_t1, preds_t2
     c_candidate = list(range(args.class_num))
     random.shuffle(c_candidate)
     # gmn iterations
-    for c in c_candidate[0:args.gmn_N]:
+    for c in c_candidate[0:args.gmn_N]: # 每个类
         # gm loss
         gm_loss = 0
 
-        src_ind = (src_y == c).nonzero().squeeze()
+        src_ind = (src_y == c).nonzero().squeeze() # 找出每一类
         #print("src_y,",src_y,"src_ind:",src_ind)
         tgt_ind = (tgt_y == c).nonzero().squeeze()
+        # 下列情况就退出
         if src_ind.shape == torch.Size([]) or tgt_ind.shape == torch.Size([]) or src_ind.shape == torch.Size([0]) or tgt_ind.shape == torch.Size([0]):
             continue
 
@@ -265,7 +267,7 @@ def gradient_discrepancy_loss(args, preds_s1,preds_s2, src_y, preds_t1, preds_t2
         
         #print("src_ind:",s_y,"tgt_ind:",t_y)
 
-        src_loss1 = loss(p_s1 , s_y)
+        src_loss1 = loss(p_s1 , s_y) # 为啥要计算两个
         
         tgt_loss1 = loss_w(p_t1 , t_y)
 
@@ -297,7 +299,7 @@ def gradient_discrepancy_loss(args, preds_s1,preds_s2, src_y, preds_t1, preds_t2
             else:
                 _cossim = F.cosine_similarity(fake_grad, real_grad, dim=0)
             #_mse = F.mse_loss(fake_grad, real_grad)
-            grad_cossim11.append(_cossim)
+            grad_cossim11.append(_cossim) # 存储的是每一类的梯度相似情况
             #grad_mse.append(_mse)
 
         grad_cossim1 = torch.stack(grad_cossim11)
@@ -305,7 +307,7 @@ def gradient_discrepancy_loss(args, preds_s1,preds_s2, src_y, preds_t1, preds_t2
         #grad_mse1 = torch.stack(grad_mse)
         #gm_loss1 = (1.0 - grad_cossim1).sum() * args.Q + grad_mse1.sum() * args.Z
         #netE+C2
-        for n, p in netC2.named_parameters():
+        for n, p in netC2.named_parameters(): # 另一个分类器
             # if len(p.shape) == 1: continue
 
             real_grad = grad([src_loss2],
@@ -335,6 +337,7 @@ def gradient_discrepancy_loss(args, preds_s1,preds_s2, src_y, preds_t1, preds_t2
     return total_loss/args.gmn_N
 
 def gradient_discrepancy_loss_margin(args, p_s1,p_s2, s_y, p_t1, p_t2, t_y, netE, netC1, netC2):
+    """没有类别"""
     loss_w = Weighted_CrossEntropy
     loss = nn.CrossEntropyLoss()
     #CrossEntropyLabelSmooth(num_classes=args.class_num, epsilon=0.1)

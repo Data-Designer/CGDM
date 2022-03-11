@@ -33,7 +33,7 @@ parser.add_argument('--train_path', type=str, default='dataset/VisDA/train', met
                     help='directory of source datasets')
 parser.add_argument('--val_path', type=str, default='dataset/VisDA/validation', metavar='B',
                     help='directory of target datasets')
-parser.add_argument('--gmn_N', type=int, default='12', metavar='B', help='The number of classes to calulate gradient similarity')
+parser.add_argument('--gmn_N', type=int, default='12', metavar='B', help='The number of classes to calulate gradient similarity') # 这里全部使用了，但是没有加权。
 parser.add_argument('--class_num', type=int, default='12', metavar='B', help='The number of classes')
 parser.add_argument('--pseudo_interval', type=int, default=2000, metavar='B', help='')
 parser.add_argument('--resnet', type=str, default='101', metavar='B', help='which resnet 18,50,101,152,200')
@@ -137,12 +137,12 @@ def train(num_epoch):
     for ep in range(num_epoch):
         since = time.time()
         for batch_idx, data in enumerate(dataset):
-            if ep > start and batch_idx % args.pseudo_interval == 0:
+            if ep > start and batch_idx % args.pseudo_interval == 0: # 伪标签生成器.重新生成一次
                 print("Obtaining target label...")
                 G.eval()
                 F1.eval()
                 F2.eval()
-                mem_label = obtain_label(data_loader_T_no_shuffle, G, F1, F2, args)
+                mem_label = obtain_label(data_loader_T_no_shuffle, G, F1, F2, args) # 获取伪标签
                 mem_label = torch.from_numpy(mem_label).cuda()
 
             G.train()
@@ -166,7 +166,7 @@ def train(num_epoch):
                 data_t, label_t = data_t.cuda(), label_t.cuda()
                 if ep > start:
                     pseudo_label_t = pseudo_label_t.cuda()
-            data_all = Variable(torch.cat((data_s, data_t), 0))
+            data_all = Variable(torch.cat((data_s, data_t), 0)) # 2B，H
             label_s = Variable(label_s)
             bs = len(label_s)
 
